@@ -1,0 +1,15 @@
+# Local credentials: never commit these.
+ENV.txt
+env.txt
+.env
+.env.*
+!.env.example
+
+# Python generated files
+__pycache__/
+*.py[cod]
+
+# Blender working files
+*.blend
+*.blend1
+*.blend2

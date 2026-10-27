@@ -1,0 +1,56 @@
+# CRP-AssetBridge
+
+**Created by Aman.** Blender add-on for finding educational GLB assets in CRP, downloading them, and importing them into the scene. Current version: **3.7.0**. Its Blender name and sidebar tab are **CRP-AssetBridge**. The Python module remains `crp_glb_importer` so existing installations upgrade in place.
+
+## Install
+
+1. In Blender, open **Edit → Preferences → Add-ons → Install from Disk**.
+2. Select `CRP-AssetBridge.zip` from this repository and enable **CRP-AssetBridge**.
+3. Open **3D Viewport → N sidebar → CRP-AssetBridge**.
+4. Select the local `.env` file in **.env File**. Click **Load .env**, then **Get Token**. Use role `internal`. If Blender's file picker hides dotfiles, enable Show Hidden or paste the full `.env` path.
+
+Tested in Blender 4.4.3. No additional Python packages or browser are required.
+
+## Credentials
+
+`.env` is a local credentials file, excluded from Git and the installation ZIP. A configured local copy is supplied on this machine. Other machines should copy `.env.example` to `.env`, then fill in their credentials.
+
+```dotenv
+CRP_USERNAME="YOUR_CRP_USERNAME"
+CRP_PASSWORD="YOUR_CRP_PASSWORD"
+CRP_ROLE="internal"
+```
+
+The parser supports blank lines, comments, quoted values and an optional `export` prefix. In double-quoted values, escape a literal backslash as `\\` and a quote as `\"`. Existing two-line ENV.txt files remain readable for compatibility. The add-on hashes plaintext passwords with SHA-256 before login. Credentials and tokens are not saved into `.blend` files; the selected `.env` path may be saved.
+
+Do not force-add `.env` to Git or include it in releases.
+
+## Find and import
+
+- **Find Exact GLB:** enter a filename, with or without `.glb`. Exact matching follows API pagination to the end.
+- **Search Description / Audio:** enter a word such as `Beaker`. CRP searches filenames, model names, and audio scripts. The add-on lists unique candidate GLB names from up to 20 pages of 100 records.
+- Click a candidate filename once to select it; double-click to download and import it. **Select GLB → Download & Import** is also available.
+- **Auto: Login, Find & Import** uses the current session or logs in, then finds and imports the exact GLB.
+
+## Token refresh
+
+**Auto Refresh Token** controls automatic renewal. When enabled, an HTTP 401 during search triggers a refresh-token request, then retries the failed request once. When disabled, refresh manually or log in again. The **Refresh Token** button remains available when a refresh token exists. A rejected refresh token requires a new login.
+
+## Separate objects into a collection
+
+For newly imported assets tracked by this add-on:
+
+1. In Object Mode, select the objects to separate; keep a CRP-imported object active.
+2. Enable **Enter to Separate Objects** in the CRP panel. It defaults to OFF.
+3. **Collection Name** fills from the active object's original search, for example `mesh-Beaker`. Edit it if desired.
+4. With the pointer in the 3D Viewport, press Enter or numpad Enter. All selected objects have their parents cleared while keeping their world transforms, and move together into the named collection. Unselected objects keep their collection memberships. Use Undo to reverse the operation.
+
+If another add-on also binds Enter, disable its conflicting shortcut. On this machine, the Model Extractor `crpx.confirm_key` shortcut was disabled in Blender preferences; that machine-specific preference is not bundled in this repository.
+
+## Repository files
+
+- `crp_glb_importer/__init__.py`: add-on source.
+- `CRP-AssetBridge.zip`: installable ZIP containing only the add-on source.
+- `.env.example`: credential format example with placeholders.
+- `.env`: ignored local credentials; not part of Git or the ZIP.
+- `CHANGELOG.md`: recent feature history.
