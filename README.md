@@ -1,6 +1,6 @@
 # CRP-AssetBridge
 
-**Created by Aman.** Blender add-on for finding educational GLB assets in CRP, downloading them, and importing them into the scene. Current version: **3.7.0**. Its Blender name and sidebar tab are **CRP-AssetBridge**. The Python module remains `crp_glb_importer` so existing installations upgrade in place.
+**Created by Aman.** Blender add-on for finding educational GLB assets in CRP, downloading them, and importing them into the scene. Current version: **3.8.1**. Its Blender name and sidebar tab are **CRP-AssetBridge**. The Python module remains `crp_glb_importer` so existing installations upgrade in place.
 
 ## Install
 
@@ -27,6 +27,16 @@ Do not force-add `.env` to Git or include it in releases.
 
 ## Find and import
 
+### Saved credentials path
+
+Selecting .env saves its absolute path in `crp_assetbridge.json` under Blender's user configuration folder, independently of scene files and Save Preferences. Credentials auto-load on startup and after opening a file, without making a login request. Passwords and tokens are kept only in runtime memory. Select your .env once after upgrading; old scene paths are not trusted automatically. Old .blend files/backups may still contain credentials written by earlier versions: this update cleans loaded authentication fields on the next save, but cannot sanitize other files or backups automatically.
+
+### Export to Asset Library
+
+Select a member of a collection to export the entire collection (including nested members), or select root-level objects to export them individually. In an Outliner operator context, selected collections are also supported. Auto-find uses the custom library selected in an open Asset Browser, or the only configured library. If multiple libraries are ambiguous, select one in the Asset Browser or turn auto-find off and choose an existing folder manually. The resolved path appears in the panel.
+
+GLBs use sanitized collection/object names. Existing files are preserved with numbered suffixes. Selection and active object are restored. Excluded collections must be enabled before export; objects linked to multiple collections require an unambiguous selection. Export writes GLB files into the library folder; it does not create Blender-native Asset Browser entries or catalogs.
+
 - **Find Exact GLB:** enter a filename, with or without `.glb`. Exact matching follows API pagination to the end.
 - **Search Description / Audio:** enter a word such as `Beaker`. CRP searches filenames, model names, and audio scripts. The add-on lists unique candidate GLB names from up to 20 pages of 100 records.
 - Click a candidate filename once to select it; double-click to download and import it. **Select GLB → Download & Import** is also available.
@@ -43,7 +53,7 @@ For newly imported assets tracked by this add-on:
 1. In Object Mode, select the objects to separate; keep a CRP-imported object active.
 2. Enable **Enter to Separate Objects** in the CRP panel. It defaults to OFF.
 3. **Collection Name** fills from the active object's original search, for example `mesh-Beaker`. Edit it if desired.
-4. With the pointer in the 3D Viewport, press Enter or numpad Enter. All selected objects have their parents cleared while keeping their world transforms, and move together into the named collection. Unselected objects keep their collection memberships. Use Undo to reverse the operation.
+4. With the pointer in the 3D Viewport, press Enter or numpad Enter. Selected objects are detached, renamed to the entered name (Blender adds suffixes such as .001 for multiple objects), and moved into the named collection. Object and object-data animation, NLA and drivers are cleared; shared animated data is copied to protect unselected objects. The selected group's combined bounding-box center moves to world origin (0, 0, 0), preserving relative layout, rotation and scale. Unselected objects keep their collection memberships. Use Undo to reverse the operation.
 
 If another add-on also binds Enter, disable its conflicting shortcut. On this machine, the Model Extractor `crpx.confirm_key` shortcut was disabled in Blender preferences; that machine-specific preference is not bundled in this repository.
 

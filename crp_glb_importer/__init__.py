@@ -1,7 +1,7 @@
 bl_info = {
     "name": "CRP-AssetBridge",
     "author": "Aman",
-    "version": (3, 7, 0),
+    "version": (3, 8, 1),
     "blender": (3, 6, 0),
     "location": "3D Viewport > Sidebar > CRP-AssetBridge",
     "description": "Find, import and organize CRP educational GLB assets. Created by Aman.",
@@ -14,6 +14,8 @@ import os
 import tempfile
 import time
 import uuid
+import re
+from bpy.app.handlers import persistent
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -21,12 +23,13 @@ import urllib.request
 import bpy
 from bpy.props import BoolProperty, CollectionProperty, IntProperty, PointerProperty, StringProperty
 from bpy.types import Operator, Panel, PropertyGroup, UIList
+from mathutils import Vector
 
 
 AUTH_URL = "https://authentication.dev.learningpadedu.com/user/login"
 REFRESH_URL = "https://authentication.dev.learningpadedu.com/user/refresh/access/token"
 MODELS_URL = "https://content.dev.learningpadedu.com/v2/crp/models"
-USER_AGENT = "CRP-AssetBridge/3.7.0"
+USER_AGENT = "CRP-AssetBridge/3.8.1"
 
 
 class CRPHTTPError(RuntimeError):
@@ -152,9 +155,66 @@ def _separation_toggle_update(settings, context):
         settings.separate_collection_name = 'mesh-' + (' '.join(str(label).split()) or 'Imported GLB')
 
 
+
+# Sensitive values live only in Python memory, never in Scene ID properties.
+_session = {}
+_env_path = None
+
+def _runtime_get(key, default=""):
+    return lambda self: _session.get(key, default)
+
+def _runtime_set(key):
+    return lambda self, value: _session.__setitem__(key, value)
+
+def _config_path():
+    return os.path.join(bpy.utils.user_resource('CONFIG', create=True), 'crp_assetbridge.json')
+
+def _get_env_path(self):
+    global _env_path
+    if _env_path is None:
+        try:
+            with open(_config_path(), encoding='utf-8') as handle:
+                _env_path = str(json.load(handle).get('env_file', ''))
+        except (OSError, ValueError, TypeError):
+            _env_path = ''
+    return _env_path
+
+def _set_env_path(self, value):
+    global _env_path
+    path = os.path.abspath(bpy.path.abspath(value)) if value.strip() else ''
+    destination = _config_path()
+    temporary = destination + '.tmp'
+    try:
+        with open(temporary, 'w', encoding='utf-8') as handle:
+            json.dump({'env_file': path}, handle)
+        os.replace(temporary, destination)
+        _env_path = path
+    except OSError:
+        self.status = 'Could not save .env path; check Blender config permissions'
+        raise
+
+def _purge_legacy_secrets():
+    for scene in getattr(bpy.data, 'scenes', ()):
+        settings = scene.crp_settings
+        for key in ('username', 'password', 'token', 'refresh_token', 'logged_in', 'env_file'):
+            if key in settings:
+                del settings[key]
+
+@persistent
+def _on_load(_):
+    _session.clear()
+    _purge_legacy_secrets()
+    if not bpy.app.timers.is_registered(_auto_load_env):
+        bpy.app.timers.register(_auto_load_env, first_interval=0.5)
+
+@persistent
+def _before_save(_):
+    _purge_legacy_secrets()
+
+
 class CRPSettings(PropertyGroup):
-    username: StringProperty(name="Username", options={'SKIP_SAVE'})
-    password: StringProperty(name="Password", subtype='PASSWORD', options={'SKIP_SAVE'})
+    username: StringProperty(name="Username", options={'SKIP_SAVE'}, get=_runtime_get('username'), set=_runtime_set('username'))
+    password: StringProperty(name="Password", subtype='PASSWORD', options={'SKIP_SAVE'}, get=_runtime_get('password'), set=_runtime_set('password'))
     role: StringProperty(
         name="Role",
         description="Role expected by the CRP login API (normally internal)",
@@ -165,17 +225,17 @@ class CRPSettings(PropertyGroup):
         name=".env File",
         subtype='FILE_PATH',
         description="Select .env containing CRP_USERNAME, CRP_PASSWORD and CRP_ROLE",
-        default="",
-    )
-    token: StringProperty(name="Access Token", subtype='PASSWORD', options={'SKIP_SAVE'})
-    refresh_token: StringProperty(name="Refresh Token", subtype='PASSWORD', options={'SKIP_SAVE'})
-    logged_in: BoolProperty(name="Authenticated", default=False, options={'SKIP_SAVE'})
+        default="", get=_get_env_path, set=_set_env_path,
+    )  # Saved independently of .blend files; contains only the path
+    token: StringProperty(name="Access Token", subtype='PASSWORD', options={'SKIP_SAVE'}, get=_runtime_get('token'), set=_runtime_set('token'))
+    refresh_token: StringProperty(name="Refresh Token", subtype='PASSWORD', options={'SKIP_SAVE'}, get=_runtime_get('refresh_token'), set=_runtime_set('refresh_token'))
+    logged_in: BoolProperty(name="Authenticated", default=False, options={'SKIP_SAVE'}, get=_runtime_get('logged_in', False), set=_runtime_set('logged_in'))
     auto_refresh: BoolProperty(name="Auto Refresh Token", default=True,
                               description="Automatically renew expired access tokens and retry searches")
     import_search_text: StringProperty(options={'HIDDEN', 'SKIP_SAVE'})
     enter_separate_enabled: BoolProperty(
         name="Enter to Separate Objects", default=False,
-        description="Enable Enter to clear selected objects' parents and move them to the collection shown below",
+        description="Enable Enter to detach, rename, clear animation and center selected objects in the collection below",
         update=_separation_toggle_update,
     )
     separate_collection_name: StringProperty(
@@ -201,6 +261,17 @@ class CRPSettings(PropertyGroup):
         subtype='DIR_PATH',
         description="Leave blank to use Blender's temporary folder",
         default="",
+    )
+    asset_library_path: StringProperty(
+        name="Asset Library Path",
+        subtype='DIR_PATH',
+        description="Path to Asset Library folder for GLB export. Leave blank to auto-detect",
+        default="",
+    )
+    auto_find_asset_lib: BoolProperty(
+        name="Auto-find Asset Library",
+        default=True,
+        description="Use the custom library selected in an open Asset Browser, or the only configured library",
     )
 
 
@@ -656,10 +727,20 @@ class CRP_OT_AutoWorkflow(Operator):
             return {'CANCELLED'}
 
 
+def _selection_center(objects):
+    points = []
+    for obj in objects:
+        if obj.type in {'MESH', 'CURVE', 'SURFACE', 'FONT', 'META'}:
+            points.extend(obj.matrix_world @ Vector(corner) for corner in obj.bound_box)
+    if not points:
+        points = [obj.matrix_world.translation.copy() for obj in objects]
+    return Vector(tuple((min(p[i] for p in points) + max(p[i] for p in points)) * .5 for i in range(3)))
+
+
 class CRP_OT_CollectImportedGLB(Operator):
     bl_idname = "crp.collect_imported_glb"
     bl_label = "Separate Selected Objects"
-    bl_description = "Clear selected objects' parents, keep their world transforms, and move them to mesh-<search text>"
+    bl_description = "Detach selected objects, rename them, clear their animation and center the group at world origin"
     bl_options = {'REGISTER', 'UNDO'}
 
     @classmethod
@@ -677,6 +758,9 @@ class CRP_OT_CollectImportedGLB(Operator):
             return {'CANCELLED'}
         selected = list(context.selected_objects)
         transforms = {obj: obj.matrix_world.copy() for obj in selected}
+        # Keep unselected children in place when their selected parents are centered.
+        outside_children = {child: child.matrix_world.copy() for obj in selected
+                            for child in obj.children if child not in selected}
         detached_id = active.get('crp_detached_id') or uuid.uuid4().hex
         collection = next((c for c in context.scene.collection.children_recursive
                            if c.get('crp_detached_id') == detached_id
@@ -688,6 +772,18 @@ class CRP_OT_CollectImportedGLB(Operator):
             collection['crp_detached_id'] = detached_id
             context.scene.collection.children.link(collection)
         for obj in selected:
+            obj.animation_data_clear()
+            data = getattr(obj, 'data', None)
+            if data is not None:
+                keys = getattr(data, 'shape_keys', None)
+                if getattr(data, 'animation_data', None) or (keys and keys.animation_data):
+                    if data.users > 1:
+                        obj.data = data.copy()
+                        data = obj.data
+                    data.animation_data_clear()
+                    keys = getattr(data, 'shape_keys', None)
+                    if keys:
+                        keys.animation_data_clear()
             obj.parent = None
             obj.matrix_parent_inverse.identity()
         for obj in selected:
@@ -699,9 +795,162 @@ class CRP_OT_CollectImportedGLB(Operator):
                 if old_collection != collection:
                     old_collection.objects.unlink(obj)
         context.view_layer.update()
+        center = _selection_center(selected)
+        for obj in selected:
+            matrix = obj.matrix_world.copy()
+            matrix.translation -= center
+            obj.matrix_world = matrix
+            if obj.name != name:
+                obj.name = name
+        context.view_layer.update()
+        for child, matrix in outside_children.items():
+            child.matrix_world = matrix
+        context.view_layer.update()
         context.scene.crp_settings.separate_collection_name = collection.name
-        self.report({'INFO'}, 'Separated {0} objects into {1} (transforms kept)'.format(len(selected), collection.name))
+        self.report({'INFO'}, 'Prepared {0} objects in {1}: renamed, animation cleared, centered'.format(len(selected), collection.name))
         return {'FINISHED'}
+
+
+def _get_asset_library_path(settings):
+    if not settings.auto_find_asset_lib:
+        path = bpy.path.abspath(settings.asset_library_path).strip()
+        return path if path and os.path.isdir(path) else None
+    libraries = bpy.context.preferences.filepaths.asset_libraries
+    valid = {lib.name: bpy.path.abspath(lib.path) for lib in libraries
+             if lib.path and os.path.isdir(bpy.path.abspath(lib.path))}
+    # Resolve an explicitly selected custom library in an open Asset Browser.
+    active = set()
+    for window in bpy.context.window_manager.windows:
+        for area in window.screen.areas:
+            if area.type == 'FILE_BROWSER':
+                params = getattr(area.spaces.active, 'params', None)
+                reference = getattr(params, 'asset_library_reference', '')
+                if reference in valid:
+                    active.add(valid[reference])
+    if len(active) == 1:
+        return active.pop()
+    if not active and len(valid) == 1:
+        return next(iter(valid.values()))
+    return None  # Multiple libraries are ambiguous; never silently pick the first.
+
+
+def _export_filename(name):
+    stem = re.sub(r'[<>:"/\\\\|?*\x00-\x1f]', '_', name).strip(' .')[:150] or 'Asset'
+    if stem.split('.')[0].upper() in {'CON', 'PRN', 'AUX', 'NUL', *('COM%d' % i for i in range(1, 10)), *('LPT%d' % i for i in range(1, 10))}:
+        stem = '_' + stem
+    return stem
+
+
+def _reserve_export_path(directory, name):
+    root = os.path.realpath(directory)
+    stem = _export_filename(name)
+    index = 0
+    while True:
+        suffix = '' if index == 0 else '_%03d' % index
+        path = os.path.join(root, stem + suffix + '.glb')
+        if os.path.commonpath([root, os.path.realpath(path)]) != root:
+            raise RuntimeError('Export filename escapes the library folder')
+        try:
+            with open(path, 'xb'):
+                pass
+            return path
+        except FileExistsError:
+            index += 1
+
+
+def _export_groups(context):
+    selected_ids = getattr(context, 'selected_ids', ())
+    collections = {item for item in selected_ids if isinstance(item, bpy.types.Collection)}
+    scene_collections = set(context.scene.collection.children_recursive)
+    standalone = []
+    for obj in context.selected_objects:
+        owners = set(obj.users_collection) & scene_collections
+        if len(owners) > 1:
+            raise RuntimeError('Object belongs to multiple collections: ' + obj.name)
+        if owners:
+            collections.update(owners)
+        else:
+            standalone.append(obj)
+    # A selected ancestor already includes its nested collections.
+    collections = {c for c in collections if not any(c in parent.children_recursive for parent in collections if parent != c)}
+    covered = {obj for c in collections for obj in c.all_objects}
+    return ([(c.name, list(c.all_objects)) for c in sorted(collections, key=lambda c: c.name)]
+            + [(obj.name, [obj]) for obj in standalone if obj not in covered])
+
+
+class CRP_OT_ExportToAssetLibrary(Operator):
+    bl_idname = "crp.export_to_asset_library"
+    bl_label = "Export to Asset Library"
+    bl_description = "Export complete collections and root-level objects as GLBs; existing files are never overwritten"
+
+    @classmethod
+    def poll(cls, context):
+        return context.mode == 'OBJECT' and (bool(context.selected_objects) or
+            any(isinstance(item, bpy.types.Collection) for item in getattr(context, 'selected_ids', ())))
+
+    def execute(self, context):
+        settings = context.scene.crp_settings
+        directory = _get_asset_library_path(settings)
+        if not directory:
+            self.report({'ERROR'}, "Choose a valid manual path, or select one custom library in an Asset Browser")
+            return {'CANCELLED'}
+        original = list(context.selected_objects)
+        active = context.view_layer.objects.active
+        states = {}
+        count = 0
+        try:
+            groups = _export_groups(context)
+            if not groups:
+                raise RuntimeError('No collections or objects selected')
+            for name, objects in groups:
+                if not objects:
+                    raise RuntimeError('Empty collection: ' + name)
+                for obj in objects:
+                    if obj.name not in context.view_layer.objects:
+                        raise RuntimeError('Enable excluded collection before exporting: ' + obj.name)
+                    states[obj] = (obj.hide_get(), obj.hide_viewport, obj.hide_select)
+            for obj in states:
+                obj.hide_viewport = False
+                obj.hide_select = False
+                obj.hide_set(False)
+            for name, objects in groups:
+                for obj in context.view_layer.objects:
+                    obj.select_set(False)
+                for obj in objects:
+                    obj.select_set(True)
+                if set(context.selected_objects) != set(objects):
+                    raise RuntimeError('Collection contains unavailable objects; enable its visibility first')
+                context.view_layer.objects.active = objects[0]
+                path = _reserve_export_path(directory, name)
+                try:
+                    result = bpy.ops.export_scene.gltf(
+                        filepath=path, use_selection=True, export_format='GLB',
+                        export_materials='EXPORT', export_cameras=False, export_lights=False)
+                    if 'FINISHED' not in result:
+                        raise RuntimeError('Blender cancelled GLB export')
+                    with open(path, 'rb') as handle:
+                        if handle.read(4) != b'glTF':
+                            raise RuntimeError('Exporter did not produce a valid GLB')
+                except Exception:
+                    os.remove(path)  # Only the new file exclusively reserved by this operation.
+                    raise
+                count += 1
+            settings.status = 'Exported %d GLB(s) to %s' % (count, directory)
+            self.report({'INFO'}, settings.status)
+            return {'FINISHED'}
+        except Exception as exc:
+            settings.status = 'Export stopped after %d file(s): %s' % (count, exc)
+            self.report({'ERROR'}, settings.status)
+            return {'CANCELLED'}
+        finally:
+            for obj in context.view_layer.objects:
+                obj.select_set(False)
+            for obj, state in states.items():
+                obj.hide_set(state[0])
+                obj.hide_viewport, obj.hide_select = state[1:]
+            for obj in original:
+                obj.select_set(True)
+            context.view_layer.objects.active = active
 
 
 class CRP_PT_MainPanel(Panel):
@@ -773,13 +1022,29 @@ class CRP_PT_MainPanel(Panel):
         auto = layout.box()
         auto.label(text="One-click workflow", icon='PLAY')
         auto.operator("crp.auto_workflow", icon='PLAY')
+        
         separate = layout.box()
         separate.prop(settings, 'enter_separate_enabled')
         controls = separate.column()
         controls.enabled = settings.enter_separate_enabled
         controls.prop(settings, 'separate_collection_name')
-        controls.label(text="Selected objects: keep transforms")
+        controls.label(text="Rename, clear animation, center group")
         controls.operator('crp.collect_imported_glb', icon='OUTLINER_COLLECTION')
+        
+        export_box = layout.box()
+        export_box.label(text="Export to Asset Library", icon='ASSET_MANAGER')
+        export_box.prop(settings, 'auto_find_asset_lib')
+        if settings.auto_find_asset_lib:
+            # Show which path is auto-detected
+            asset_path = _get_asset_library_path(settings)
+            if asset_path:
+                export_box.label(text=f"Using: {asset_path}", icon='FOLDER_REDIRECT')
+            else:
+                export_box.label(text="Choose one library in Asset Browser or use manual", icon='ERROR')
+        else:
+            export_box.prop(settings, 'asset_library_path')
+        export_box.operator('crp.export_to_asset_library', icon='EXPORT')
+        export_box.label(text="Exports whole collections; existing files get a suffix", icon='INFO')
 
 
 CLASSES = (
@@ -798,11 +1063,35 @@ CLASSES = (
     CRP_OT_DownloadImport,
     CRP_OT_AutoWorkflow,
     CRP_OT_CollectImportedGLB,
+    CRP_OT_ExportToAssetLibrary,
     CRP_PT_MainPanel,
 )
 
 
 _addon_keymaps = []
+
+
+def _auto_load_env():
+    """Automatically load .env credentials on startup if a path is saved."""
+    try:
+        import bpy
+        if not hasattr(bpy.context, 'scene') or bpy.context.scene is None:
+            return
+        settings = bpy.context.scene.crp_settings
+        _purge_legacy_secrets()
+        if not settings.env_file or settings.logged_in:
+            return
+        path = bpy.path.abspath(settings.env_file).strip()
+        if path and os.path.isfile(path):
+            username, password, role = _read_env_credentials(path)
+            settings.username = username
+            settings.password = password
+            if role:
+                settings.role = role
+            settings.status = ".env auto-loaded from saved path"
+    except Exception:
+        if bpy.context.scene:
+            bpy.context.scene.crp_settings.status = ".env auto-load failed; check the saved path and file format"
 
 
 def register():
@@ -815,9 +1104,20 @@ def register():
         for key in ('RET', 'NUMPAD_ENTER'):
             item = keymap.keymap_items.new('crp.collect_imported_glb', key, 'PRESS')
             _addon_keymaps.append((keymap, item))
+    _purge_legacy_secrets()
+    bpy.app.handlers.load_post.append(_on_load)
+    bpy.app.handlers.save_pre.append(_before_save)
+    # Auto-load .env after a short delay to ensure context is ready
+    bpy.app.timers.register(_auto_load_env, first_interval=0.5)
 
 
 def unregister():
+    if bpy.app.timers.is_registered(_auto_load_env):
+        bpy.app.timers.unregister(_auto_load_env)
+    for handlers, callback in ((bpy.app.handlers.load_post, _on_load), (bpy.app.handlers.save_pre, _before_save)):
+        if callback in handlers:
+            handlers.remove(callback)
+    _session.clear()
     for keymap, item in _addon_keymaps:
         keymap.keymap_items.remove(item)
     _addon_keymaps.clear()
