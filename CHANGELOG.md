@@ -1,5 +1,14 @@
 # Changelog
 
+## 3.9.1
+- Optional Save Camera Animation JSON checkbox fetches the selected model's dynamicCameraFile signed URL into the saved blend folder, without changing scene cameras.
+- Tested with 32 camera keyframes at 24 FPS, missing camera metadata, default-off behavior, and unique export names in Blender 5.2.3.
+
+## 3.9.0
+- Added separate default-off audio and label JSON checkboxes for the selected GLB import.
+- Audio files are stored in CRP_Audio beside the blend and added as Sequencer sound strips at the current frame. Additional language alternatives are muted.
+- Label JSON is saved beside the blend. Save the blend before enabling optional extras.
+
 ## 3.8.1
 - Auto-load .env on startup and file load; persist only its absolute path in Blender's user configuration.
 - Keep credentials and tokens in runtime memory, purge legacy stored authentication fields on load/save, and clean up timers on disable.

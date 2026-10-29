@@ -1,7 +1,7 @@
 bl_info = {
     "name": "CRP-AssetBridge",
     "author": "Aman",
-    "version": (3, 8, 1),
+    "version": (3, 9, 1),
     "blender": (3, 6, 0),
     "location": "3D Viewport > Sidebar > CRP-AssetBridge",
     "description": "Find, import and organize CRP educational GLB assets. Created by Aman.",
@@ -29,7 +29,7 @@ from mathutils import Vector
 AUTH_URL = "https://authentication.dev.learningpadedu.com/user/login"
 REFRESH_URL = "https://authentication.dev.learningpadedu.com/user/refresh/access/token"
 MODELS_URL = "https://content.dev.learningpadedu.com/v2/crp/models"
-USER_AGENT = "CRP-AssetBridge/3.8.1"
+USER_AGENT = "CRP-AssetBridge/3.9.1"
 
 
 class CRPHTTPError(RuntimeError):
@@ -213,6 +213,12 @@ def _before_save(_):
 
 
 class CRPSettings(PropertyGroup):
+    fetch_camera: BoolProperty(name="Save Camera Animation JSON", default=False,
+        description="Fetch selected model camera animation JSON beside the saved blend; does not alter scene cameras")
+    fetch_audio: BoolProperty(name="Import Audio to Timeline", default=False,
+        description="Download selected model audio and add sound strips at the current frame; save the blend first")
+    fetch_labels: BoolProperty(name="Save Label JSON beside .blend", default=False,
+        description="Save the selected model's labelData beside the saved blend file")
     username: StringProperty(name="Username", options={'SKIP_SAVE'}, get=_runtime_get('username'), set=_runtime_set('username'))
     password: StringProperty(name="Password", subtype='PASSWORD', options={'SKIP_SAVE'}, get=_runtime_get('password'), set=_runtime_set('password'))
     role: StringProperty(
@@ -634,6 +640,114 @@ class CRP_OT_SelectAudioResult(Operator):
         return {'FINISHED'}
 
 
+def _model_details(settings, model_id):
+    for attempt in range(2):
+        try:
+            _, payload = _request_json(MODELS_URL + '/get', method='POST',
+                headers=_auth_headers(settings.token), json_body={'model_id': model_id})
+            data = payload.get('data')
+            if not isinstance(data, dict):
+                raise RuntimeError('Model detail response has no data')
+            if data.get('model_id') != model_id:
+                raise RuntimeError('Model detail ID does not match selected GLB')
+            return data
+        except CRPHTTPError as exc:
+            if exc.status != 401 or attempt or not settings.auto_refresh or not settings.refresh_token:
+                raise
+            _refresh_access_token(settings)
+
+
+def _import_model_extras(context, settings, model):
+    if not (settings.fetch_audio or settings.fetch_labels or settings.fetch_camera):
+        return [], []
+    details = _model_details(settings, model['model_id'])
+    metadata = details.get('meta_data') or {}
+    folder = os.path.dirname(bpy.data.filepath)
+    stem = _export_filename(os.path.splitext(model.get('file_name') or 'model')[0])
+    messages, warnings = [], []
+    if settings.fetch_camera:
+        camera = metadata.get('dynamicCameraFile')
+        url = camera.get('signed_url') if isinstance(camera, dict) else None
+        if not url:
+            warnings.append('No camera animation download URL for selected GLB')
+        else:
+            try:
+                if urllib.parse.urlsplit(url).scheme != 'https':
+                    raise ValueError('Camera download requires HTTPS')
+                request = urllib.request.Request(url, headers={'User-Agent': USER_AGENT})
+                with urllib.request.urlopen(request, timeout=60) as response:
+                    raw = response.read(20 * 1024 * 1024 + 1)
+                if len(raw) > 20 * 1024 * 1024:
+                    raise ValueError('Camera JSON exceeds 20 MB limit')
+                document = json.loads(raw.decode('utf-8-sig'))
+                if not isinstance(document, (dict, list)):
+                    raise ValueError('Invalid camera JSON structure')
+                path = os.path.join(folder, stem + '_camera_' + uuid.uuid4().hex[:8] + '.json')
+                with open(path, 'x', encoding='utf-8') as handle:
+                    json.dump(document, handle, ensure_ascii=False, indent=2)
+                messages.append('Camera animation JSON saved: ' + os.path.basename(path))
+            except Exception:
+                warnings.append('Camera JSON fetch failed; check session and folder permissions')
+    if settings.fetch_labels:
+        labels = metadata.get('labelData')
+        if isinstance(labels, list) and labels:
+            # Unique suffix preserves earlier exports; never store signed URLs or tokens.
+            path = os.path.join(folder, stem + '_labels_' + uuid.uuid4().hex[:8] + '.json')
+            with open(path, 'x', encoding='utf-8') as handle:
+                json.dump({'model_id': model['model_id'], 'file_name': model.get('file_name'),
+                           'labelData': labels}, handle, ensure_ascii=False, indent=2)
+            messages.append('Label JSON saved: ' + os.path.basename(path))
+        else:
+            warnings.append('No label data for selected GLB')
+    if settings.fetch_audio:
+        audios = metadata.get('audio') or []
+        if not isinstance(audios, list):
+            audios = []
+        usable = [a for a in audios if isinstance(a, dict) and a.get('signed_url')]
+        if not usable:
+            warnings.append('No audio download URL for selected GLB')
+        for index, audio in enumerate(usable):
+            path = None
+            try:
+                url = audio['signed_url']
+                if urllib.parse.urlsplit(url).scheme != 'https':
+                    raise RuntimeError('Audio requires HTTPS')
+                suffix = os.path.splitext(urllib.parse.urlsplit(url).path)[1].lower()
+                if suffix not in {'.mp3', '.wav', '.ogg', '.flac', '.m4a', '.aac'}:
+                    raise RuntimeError('Unsupported audio format')
+                audio_folder = os.path.join(folder, 'CRP_Audio')
+                os.makedirs(audio_folder, exist_ok=True)
+                name = stem + '_' + _export_filename(str(audio.get('lang', 'audio'))) + '_' + uuid.uuid4().hex[:8]
+                path = os.path.join(audio_folder, name + suffix)
+                with urllib.request.urlopen(urllib.request.Request(url, headers={'User-Agent': USER_AGENT}), timeout=60) as response, open(path, 'xb') as handle:
+                    count = 0
+                    while True:
+                        chunk = response.read(1024 * 1024)
+                        if not chunk:
+                            break
+                        count += len(chunk)
+                        if count > 100 * 1024 * 1024:
+                            raise RuntimeError('Audio exceeds 100 MB limit')
+                        handle.write(chunk)
+                editor = context.scene.sequence_editor_create()
+                strips = getattr(editor, 'strips', None)
+                if strips is None:
+                    strips = editor.sequences
+                channel = max((strip.channel for strip in strips), default=0) + 1
+                strip = strips.new_sound(name=stem + ' [' + str(audio.get('lang', index + 1)) + ']',
+                    filepath=path, channel=channel, frame_start=context.scene.frame_current)
+                strip.sound.filepath = bpy.path.relpath(path)
+                strip['crp_model_id'] = model['model_id']
+                # Multiple languages are alternatives, not simultaneous narration.
+                strip.mute = index > 0
+                messages.append('Audio added: ' + str(audio.get('lang', index + 1)))
+            except Exception:
+                if path and os.path.isfile(path):
+                    os.remove(path)
+                warnings.append('Audio could not be downloaded/added; retry import with a fresh session')
+    return messages, warnings
+
+
 class CRP_OT_DownloadImport(Operator):
     bl_idname = "crp.download_import"
     bl_label = "Download & Import"
@@ -644,6 +758,9 @@ class CRP_OT_DownloadImport(Operator):
         settings = context.scene.crp_settings
         if not settings.result_json:
             self.report({'ERROR'}, "Search for a model first")
+            return {'CANCELLED'}
+        if (settings.fetch_audio or settings.fetch_labels or settings.fetch_camera) and not bpy.data.filepath:
+            self.report({'ERROR'}, "Save the .blend file first, or disable the audio/JSON ticks")
             return {'CANCELLED'}
         try:
             model = json.loads(settings.result_json)
@@ -685,7 +802,18 @@ class CRP_OT_DownloadImport(Operator):
             for obj in set(bpy.data.objects) - previous_objects:
                 obj['crp_import_id'] = import_id
                 obj['crp_search_text'] = search_text
+            warnings = []
+            try:
+                messages, warnings = _import_model_extras(context, settings, model)
+                for message in messages:
+                    self.report({'INFO'}, message)
+            except Exception:
+                warnings = ['GLB imported, but optional audio/JSON fetch failed; check session and folder permissions']
+            for warning in warnings:
+                self.report({'WARNING'}, warning)
             settings.status = "Imported: {0}".format(filename)
+            if warnings:
+                settings.status += ' (audio/JSON warning: ' + warnings[0] + ')'
             self.report({'INFO'}, "Imported {0}".format(filename))
             return {'FINISHED'}
         except Exception as exc:
@@ -1020,6 +1148,12 @@ class CRP_PT_MainPanel(Panel):
         status.label(text=settings.status[:100], icon='INFO')
 
         auto = layout.box()
+        auto.label(text="Optional extras for selected GLB")
+        auto.prop(settings, 'fetch_audio')
+        auto.prop(settings, 'fetch_labels')
+        auto.prop(settings, 'fetch_camera')
+        if settings.fetch_audio or settings.fetch_labels or settings.fetch_camera:
+            auto.label(text="Save .blend first; audio starts at current frame")
         auto.label(text="One-click workflow", icon='PLAY')
         auto.operator("crp.auto_workflow", icon='PLAY')
         
