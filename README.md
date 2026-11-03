@@ -1,6 +1,6 @@
 # CRP-AssetBridge
 
-**Created by Aman.** Blender add-on for finding educational GLB assets in CRP, downloading them, and importing them into the scene. Current version: **3.8.1**. Its Blender name and sidebar tab are **CRP-AssetBridge**. The Python module remains `crp_glb_importer` so existing installations upgrade in place.
+Blender add-on for finding educational GLB assets in CRP, downloading them, and importing them into the scene. Current version: **3.8.1**. Its Blender name and sidebar tab are **CRP-AssetBridge**. The Python module remains `crp_glb_importer` so existing installations upgrade in place.
 
 ## Install
 
