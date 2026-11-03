@@ -1095,7 +1095,6 @@ class CRP_PT_MainPanel(Panel):
 
         layout.label(text="Created by Aman")
         layout.label(text="Update test successful - v3.10.1", icon='CHECKMARK')
-        updater.draw(layout)
         auth = layout.box()
         auth.label(text="1. Authentication", icon='LOCKED' if not settings.logged_in else 'UNLOCKED')
         auth.prop(settings, 'auto_refresh')
