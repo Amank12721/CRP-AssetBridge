@@ -1,7 +1,7 @@
 bl_info = {
     "name": "CRP-AssetBridge",
     "author": "Aman",
-    "version": (3, 10, 0),
+    "version": (3, 10, 1),
     "blender": (3, 6, 0),
     "location": "3D Viewport > Sidebar > CRP-AssetBridge",
     "description": "Find, import and organize CRP educational GLB assets. Created by Aman.",
@@ -30,7 +30,7 @@ from . import updater
 AUTH_URL = "https://authentication.dev.learningpadedu.com/user/login"
 REFRESH_URL = "https://authentication.dev.learningpadedu.com/user/refresh/access/token"
 MODELS_URL = "https://content.dev.learningpadedu.com/v2/crp/models"
-USER_AGENT = "CRP-AssetBridge/3.10.0"
+USER_AGENT = "CRP-AssetBridge/3.10.1"
 
 
 class CRPHTTPError(RuntimeError):
@@ -1094,6 +1094,7 @@ class CRP_PT_MainPanel(Panel):
         settings = context.scene.crp_settings
 
         layout.label(text="Created by Aman")
+        layout.label(text="Update test successful - v3.10.1", icon='CHECKMARK')
         updater.draw(layout)
         auth = layout.box()
         auth.label(text="1. Authentication", icon='LOCKED' if not settings.logged_in else 'UNLOCKED')

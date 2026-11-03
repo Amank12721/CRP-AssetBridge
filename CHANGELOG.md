@@ -1,3 +1,7 @@
+## 3.10.1
+
+- Add a visible "Update test successful - v3.10.1" panel label to verify the release updater.
+
 ## 3.10.0
 
 - Add automatic startup update checks and Check for Updates / Install Update buttons.
