@@ -73,4 +73,4 @@ Use Check for Updates in the sidebar. Install Update appears when a newer public
 
 ## Label Visualizer (3.10.3)
 
-LabelCHKAman by Aman is included and enabled by default. Controls are in Edit > Preferences > Add-ons > CRP-AssetBridge > Label Visualizer Settings. Enable Advanced Controls for appearance and timing tools. No extra sidebar panel is registered. Matching label- objects with description/animdata properties show viewport text and editable timeline bars. This does not automatically convert downloaded label JSON into scene objects. Disable any separately installed LabelCHKAman copy to avoid duplicate handlers.
+Controls are in Edit > Preferences > Add-ons > CRP-AssetBridge > Label Visualizer Settings. Enable Advanced Controls for appearance and timing tools. No extra sidebar panel is registered. Matching label- objects with description/animdata properties show viewport text and editable timeline bars. This does not automatically convert downloaded label JSON into scene objects. Disable any separately installed LabelCHKAman copy to avoid duplicate handlers.
