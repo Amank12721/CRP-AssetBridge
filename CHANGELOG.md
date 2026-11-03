@@ -1,3 +1,10 @@
+## 3.10.0
+
+- Add automatic startup update checks and Check for Updates / Install Update buttons.
+- Verify GitHub release ZIP checksums, paths, version and Blender compatibility.
+- Keep previous add-on backup, roll back failed replacement, and require restart after updates.
+- Add tag-triggered GitHub release workflow and packaging script.
+
 # Changelog
 
 ## 3.9.1

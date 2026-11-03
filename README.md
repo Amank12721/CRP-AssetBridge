@@ -64,3 +64,8 @@ If another add-on also binds Enter, disable its conflicting shortcut. On this ma
 - `.env.example`: credential format example with placeholders.
 - `.env`: ignored local credentials; not part of Git or the ZIP.
 - `CHANGELOG.md`: recent feature history.
+
+
+## Updates (3.10.0)
+
+Use Check for Updates in the sidebar. Install Update appears when a newer public GitHub release is available. Startup checks can be disabled in add-on preferences. Save your work and restart Blender after installation. See [UPDATES.md](UPDATES.md) for publishing releases.
