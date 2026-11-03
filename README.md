@@ -69,3 +69,8 @@ If another add-on also binds Enter, disable its conflicting shortcut. On this ma
 ## Updates (3.10.0)
 
 Use Check for Updates in the sidebar. Install Update appears when a newer public GitHub release is available. Startup checks can be disabled in add-on preferences. Save your work and restart Blender after installation. See [UPDATES.md](UPDATES.md) for publishing releases.
+
+
+## Label Visualizer (3.10.3)
+
+LabelCHKAman by Aman is included and enabled by default. Controls are in Edit > Preferences > Add-ons > CRP-AssetBridge > Label Visualizer Settings. Enable Advanced Controls for appearance and timing tools. No extra sidebar panel is registered. Matching label- objects with description/animdata properties show viewport text and editable timeline bars. This does not automatically convert downloaded label JSON into scene objects. Disable any separately installed LabelCHKAman copy to avoid duplicate handlers.

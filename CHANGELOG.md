@@ -1,3 +1,9 @@
+## 3.10.3
+
+- Bundle LabelCHKAman 1.4.2 viewport labels and timeline editing.
+- Enable Label Visualizer by default; expose its settings only in AssetBridge Preferences.
+- No separate LabelCHK sidebar panel; preserve existing label visibility animation paths.
+
 ## 3.10.1
 
 - Add a visible "Update test successful - v3.10.1" panel label to verify the release updater.

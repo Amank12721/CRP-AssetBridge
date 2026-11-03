@@ -155,8 +155,18 @@ def startup_check():
 
 class CRP_UpdatePreferences(bpy.types.AddonPreferences):
     bl_idname = __package__
+    label_visualizer_enabled: BoolProperty(name='Enable Label Visualizer', default=True)
+    show_label_options: BoolProperty(name='Label Visualizer Settings', default=False)
     check_updates_on_startup: BoolProperty(name='Check for updates when Blender starts', default=True)
     def draw(self, context):
+        from . import labels
+        box = self.layout.box()
+        box.prop(self, 'label_visualizer_enabled')
+        box.prop(self, 'show_label_options', icon='TRIA_DOWN' if self.show_label_options else 'TRIA_RIGHT', emboss=False)
+        if self.show_label_options and context.scene:
+            controls = box.column()
+            controls.enabled = self.label_visualizer_enabled
+            labels.draw_preferences(controls, context)
         self.layout.prop(self, 'check_updates_on_startup')
         draw(self.layout)
 

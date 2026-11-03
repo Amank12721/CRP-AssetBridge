@@ -1,7 +1,7 @@
 bl_info = {
     "name": "CRP-AssetBridge",
     "author": "Aman",
-    "version": (3, 10, 1),
+    "version": (3, 10, 3),
     "blender": (3, 6, 0),
     "location": "3D Viewport > Sidebar > CRP-AssetBridge",
     "description": "Find, import and organize CRP educational GLB assets. Created by Aman.",
@@ -24,13 +24,13 @@ import bpy
 from bpy.props import BoolProperty, CollectionProperty, IntProperty, PointerProperty, StringProperty
 from bpy.types import Operator, Panel, PropertyGroup, UIList
 from mathutils import Vector
-from . import updater
+from . import updater, labels
 
 
 AUTH_URL = "https://authentication.dev.learningpadedu.com/user/login"
 REFRESH_URL = "https://authentication.dev.learningpadedu.com/user/refresh/access/token"
 MODELS_URL = "https://content.dev.learningpadedu.com/v2/crp/models"
-USER_AGENT = "CRP-AssetBridge/3.10.1"
+USER_AGENT = "CRP-AssetBridge/3.10.3"
 
 
 class CRPHTTPError(RuntimeError):
@@ -1231,6 +1231,7 @@ def _auto_load_env():
 
 
 def register():
+    labels.register()
     updater.register(bl_info["version"])
     for cls in CLASSES:
         bpy.utils.register_class(cls)
@@ -1250,6 +1251,7 @@ def register():
 
 def unregister():
     updater.unregister()
+    labels.unregister()
     if bpy.app.timers.is_registered(_auto_load_env):
         bpy.app.timers.unregister(_auto_load_env)
     for handlers, callback in ((bpy.app.handlers.load_post, _on_load), (bpy.app.handlers.save_pre, _before_save)):
